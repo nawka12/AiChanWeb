@@ -304,3 +304,9 @@ const chatContainer = document.getElementById('chat-container');
                 console.error('Error saving command:', error);
             }
         });
+
+        // Add this to your existing script.js
+        document.getElementById('mobile-menu-toggle').addEventListener('click', function() {
+            const mobileMenu = document.getElementById('mobile-menu');
+            mobileMenu.classList.toggle('hidden');
+        });
