@@ -219,8 +219,8 @@ const chatContainer = document.getElementById('chat-container');
                 const data = await response.json();
                 const apiKeyInput = document.getElementById('api-key');
                 if (data.isSet) {
-                    apiKeyInput.value = data.apiKey;
-                    apiKeyInput.placeholder = 'API key is set';
+                    apiKeyInput.value = data.apiKey; // Will show asterisks matching API key length
+                    apiKeyInput.placeholder = 'Enter new API key to change';
                 } else {
                     apiKeyInput.value = '';
                     apiKeyInput.placeholder = 'Enter your Anthropic API key';
@@ -248,8 +248,8 @@ const chatContainer = document.getElementById('chat-container');
             localStorage.setItem('darkMode', darkMode);
             toggleDarkMode(darkMode);
 
-            // Save API key only if it's not empty and different from the placeholder
-            if (apiKey && apiKey !== 'API key is set') {
+            // Save API key only if it's not empty and not just asterisks
+            if (apiKey && !/^\*+$/.test(apiKey)) {
                 try {
                     const response = await fetch('/save-api-key', {
                         method: 'POST',
