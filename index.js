@@ -7,6 +7,9 @@ require('dotenv').config();
 const { searchQuery } = require('./searchlogic.js');
 const Anthropic = require('@anthropic-ai/sdk');
 
+// At the top of your file, after loading dotenv
+console.log("Loaded API Key:", process.env.ANTHROPIC_API_KEY ? "Set" : "Not set");
+
 // Add this function at the beginning of the file
 const createSearchMessage = (queries, isComplete = false, totalQueries = null, currentProgress = null) => {
     const currentQuery = queries[queries.length - 1];
@@ -41,11 +44,6 @@ const config = {
     queryDeepSystemMessage: (username) => `Your job is to convert questions into search queries based on context provided. Don't reply with anything other than search queries with no quote, separated by comma. Each search query will be performed separately, so make sure to write the queries straight to the point. Always assume you know nothing about the user's question. Today is ${new Date().toLocaleDateString('en-US', DATE_OPTIONS)}. If the user asking a question about himself, his name is ${username}.`,
     contextSystemMessage: `Your job is to analyze conversations and create a concise context summary that captures the key information needed to understand follow-up questions.`,
 };
-
-// Initialize Anthropic client
-let anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 // State management
 const userConversations = {};
@@ -115,6 +113,13 @@ const formatSearchResults = (results, commandContent) => {
     return `Here's more data from the web about my question:\n\n${results.map(result => `URL: ${result.url}, Title: ${result.title}, Content: ${result.content}`).join('\n\n')}\n\nMy question is: ${commandContent}`;
 };
 
+// Move this outside of the app.post('/chat') handler
+const getAnthropicClient = () => {
+    return new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+};
+
 // Express app setup
 const app = express();
 const port = process.env.PORT || 3000;
@@ -124,6 +129,16 @@ app.use(express.static('public'));
 
 app.post('/chat', async (req, res) => {
     try {
+        // Check if API key is set
+        if (!process.env.ANTHROPIC_API_KEY) {
+            res.write(`data: ${JSON.stringify({ type: 'final', response: "API key is not set. Please set up your Anthropic API key in the settings." })}\n\n`);
+            res.end();
+            return;
+        }
+
+        // Get a fresh Anthropic client for each request
+        const anthropic = getAnthropicClient();
+
         const { message, userId, command } = req.body;
 
         // Initialize user data if it doesn't exist
@@ -192,6 +207,8 @@ app.post('/chat', async (req, res) => {
 
         console.log("Messages to be sent to API:", JSON.stringify(messages, null, 2));
 
+        console.log("Using API Key:", process.env.ANTHROPIC_API_KEY.substring(0, 5) + '...');  // Log first 5 characters of API key
+
         const response = await anthropic.messages.create({
             model: AI_MODEL,
             max_tokens: MAX_TOKENS,
@@ -231,8 +248,13 @@ app.post('/chat', async (req, res) => {
         res.end();
     } catch (error) {
         console.error("API Error:", error);
-        // Instead of sending a JSON response, send an error message in the same format as successful responses
-        const errorMessage = "I apologize, but there was an error processing your request. Please try again later.";
+        let errorMessage = "I apologize, but there was an error processing your request. Please try again later.";
+        
+        // Check if the error is related to an invalid API key
+        if (error.status === 401) {
+            errorMessage = "There was an error with the API key. Please check your Anthropic API key in the settings.";
+        }
+        
         res.write(`data: ${JSON.stringify({ type: 'final', response: errorMessage })}\n\n`);
         res.end();
     }
@@ -248,7 +270,7 @@ app.get('/conversation/:userId', (req, res) => {
     });
 });
 
-// Add this new endpoint for saving the API key
+// Update the save-api-key endpoint
 app.post('/save-api-key', (req, res) => {
     const { apiKey } = req.body;
     
@@ -274,22 +296,19 @@ app.post('/save-api-key', (req, res) => {
     // Write the content to the .env file
     fs.writeFileSync(envPath, envContent.trim());
 
-    // Reload environment variables
-    require('dotenv').config();
+    // Update the environment variable directly
+    process.env.ANTHROPIC_API_KEY = apiKey;
 
-    // Update the Anthropic client with the new API key
-    anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    console.log("API Key updated:", apiKey.substring(0, 5) + '...');  // Log first 5 characters of new API key
 
-    res.json({ message: 'API key saved successfully' });
+    res.json({ message: 'API key saved and updated successfully' });
 });
 
 // Modify the get-api-key endpoint
 app.get('/get-api-key', (req, res) => {
     const apiKey = process.env.ANTHROPIC_API_KEY || '';
     res.json({ 
-        apiKey: apiKey ? 'API key is set' : '',
+        apiKey: apiKey ? '*'.repeat(apiKey.length) : '',
         isSet: !!apiKey
     });
 });
