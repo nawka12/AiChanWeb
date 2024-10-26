@@ -88,6 +88,7 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let searchStatusElement = null;
+                let allQueries = [];
 
                 while (true) {
                     const { value, done } = await reader.read();
@@ -99,10 +100,11 @@
                     for (const msg of messages) {
                         const data = JSON.parse(msg.replace('data: ', ''));
                         if (data.type === 'searchStatus') {
-                            if (searchStatusElement) {
-                                searchStatusElement.querySelector('.status-text').textContent = data.content;
+                            allQueries = data.queries; // Store all queries
+                            if (!searchStatusElement) {
+                                searchStatusElement = appendSearchStatus(data.content, allQueries);
                             } else {
-                                searchStatusElement = appendSearchStatus(data.content, data.queries);
+                                updateSearchStatus(searchStatusElement, data.content, allQueries);
                             }
                         } else if (data.type === 'final') {
                             appendMessage('Ai-chan', data.response);
@@ -142,6 +144,11 @@
             chatContainer.appendChild(statusElement);
             chatContainer.scrollTop = chatContainer.scrollHeight;
             return statusElement;
+        }
+
+        function updateSearchStatus(element, content, queries) {
+            element.querySelector('.status-text').textContent = content;
+            element.querySelector('.search-queries').innerHTML = queries.map(q => `<li>${q}</li>`).join('');
         }
 
         function resetConversation() {
