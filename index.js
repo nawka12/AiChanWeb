@@ -1,24 +1,28 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const { searchQuery } = require('./searchlogic.js');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // Add this function at the beginning of the file
-const createSearchMessage = (queries, isComplete = false) => {
-    const totalQueries = queries.length;
-    const totalResults = totalQueries * MAX_SEARCH_RESULTS;
+const createSearchMessage = (queries, isComplete = false, totalQueries = null, currentProgress = null) => {
+    const currentQuery = queries[queries.length - 1];
+    const total = totalQueries || queries.length;
+    const progress = currentProgress || queries.length;
+    
     if (isComplete) {
         return {
             type: 'searchStatus',
-            content: `Done! Searched ${totalQueries} ${totalQueries === 1 ? 'query' : 'queries'} with ${totalResults} results.`,
+            content: `Done! Searched ${total} ${total === 1 ? 'query' : 'queries'} with ${total * MAX_SEARCH_RESULTS} results.`,
             queries: queries
         };
     } else {
         return {
             type: 'searchStatus',
-            content: `Searching the web for "${queries[queries.length - 1]}"...`,
+            content: `Searching the web for "${currentQuery}"... (${progress}/${total})`,
             queries: queries
         };
     }
@@ -39,13 +43,15 @@ const config = {
 };
 
 // Initialize Anthropic client
-const anthropic = new Anthropic({
+let anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
 // State management
 const userConversations = {};
 const userContexts = {};
+const userSearchStatuses = {}; // This will now store an array of search statuses for each user
+const userCommands = {};
 
 // Helper functions
 const processContext = async (userId) => {
@@ -77,20 +83,27 @@ const processContext = async (userId) => {
     return contextAI.content[0].text;
 };
 
-const performSearch = async (command, queryAI, commandContent) => {
+const performSearch = async (command, queryAI, commandContent, res) => {
     if (command === 'search') {
         const finalQuery = queryAI.content[0].text;
-        console.log(`Searching the web for: ${finalQuery}`);
+        res.write(`data: ${JSON.stringify(createSearchMessage([finalQuery], false, 1, 1))}\n\n`);
         const searchResult = await searchQuery(finalQuery);
         const results = searchResult.results.slice(0, MAX_SEARCH_RESULTS);
         return formatSearchResults(results, commandContent);
     } else if (command === 'deepsearch') {
         const queries = queryAI.content[0].text.split(',').map(q => q.trim());
         let allResults = [];
+        const totalQueries = queries.length;
         
-        for (let query of queries) {
-            console.log(`Searching the web for: ${query}`);
-            const searchResult = await searchQuery(query);
+        // Process one query at a time
+        for (let i = 0; i < queries.length; i++) {
+            const currentQuery = queries[i];
+            const currentProgress = i + 1;  // Add current progress
+            
+            // Send status before each search
+            res.write(`data: ${JSON.stringify(createSearchMessage([currentQuery], false, totalQueries, currentProgress))}\n\n`);
+            
+            const searchResult = await searchQuery(currentQuery);
             allResults = allResults.concat(searchResult.results.slice(0, MAX_SEARCH_RESULTS));
         }
         
@@ -116,9 +129,14 @@ app.post('/chat', async (req, res) => {
         // Initialize user data if it doesn't exist
         if (!userContexts[userId]) userContexts[userId] = '';
         if (!userConversations[userId]) userConversations[userId] = [];
+        if (!userSearchStatuses[userId]) userSearchStatuses[userId] = [];
+        
+        // Store the command
+        userCommands[userId] = command;
 
         let messages = [];
         let searchContent = '';
+        let messageIndex = userConversations[userId].length; // Get current message index
 
         if (command === 'search' || command === 'deepsearch') {
             try {
@@ -142,16 +160,19 @@ app.post('/chat', async (req, res) => {
                     ? [queryAI.content[0].text]
                     : queryAI.content[0].text.split(',').map(q => q.trim());
 
-                for (let i = 0; i < queries.length; i++) {
-                    const searchMessage = createSearchMessage(queries.slice(0, i + 1));
-                    res.write(`data: ${JSON.stringify(searchMessage)}\n\n`);
-                }
-
-                searchContent = await performSearch(command, { content: [{ text: queries.join(',') }] }, message);
+                searchContent = await performSearch(command, { content: [{ text: queries.join(',') }] }, message, res);
                 messages.push({ role: "user", content: searchContent });
 
                 const completeSearchMessage = createSearchMessage(queries, true);
-                res.write(`data: ${JSON.stringify(completeSearchMessage)}\n\n`);
+                // Store the search status with its associated message index
+                userSearchStatuses[userId].push({
+                    messageIndex: messageIndex,
+                    status: completeSearchMessage
+                });
+                res.write(`data: ${JSON.stringify({
+                    ...completeSearchMessage,
+                    messageIndex: messageIndex
+                })}\n\n`);
             } catch (error) {
                 console.error("Search Error:", error);
                 res.status(500).json({ error: 'There was an error processing your search request.' });
@@ -217,10 +238,85 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Add a new endpoint to get the conversation history
+// Modify the /conversation endpoint
 app.get('/conversation/:userId', (req, res) => {
     const { userId } = req.params;
-    res.json({ conversation: userConversations[userId] || [] });
+    res.json({ 
+        conversation: userConversations[userId] || [],
+        searchStatuses: userSearchStatuses[userId] || [], // Changed to return array of statuses
+        command: userCommands[userId] || 'offline'
+    });
+});
+
+// Add this new endpoint for saving the API key
+app.post('/save-api-key', (req, res) => {
+    const { apiKey } = req.body;
+    
+    if (!apiKey) {
+        return res.status(400).json({ error: 'API key is required' });
+    }
+
+    const envPath = path.resolve(__dirname, '.env');
+    let envContent = '';
+
+    // Check if .env file exists
+    if (fs.existsSync(envPath)) {
+        envContent = fs.readFileSync(envPath, 'utf8');
+    }
+
+    // Update or add ANTHROPIC_API_KEY
+    if (envContent.includes('ANTHROPIC_API_KEY=')) {
+        envContent = envContent.replace(/ANTHROPIC_API_KEY=.*/, `ANTHROPIC_API_KEY=${apiKey}`);
+    } else {
+        envContent += `\nANTHROPIC_API_KEY=${apiKey}`;
+    }
+
+    // Write the content to the .env file
+    fs.writeFileSync(envPath, envContent.trim());
+
+    // Reload environment variables
+    require('dotenv').config();
+
+    // Update the Anthropic client with the new API key
+    anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    res.json({ message: 'API key saved successfully' });
+});
+
+// Modify the get-api-key endpoint
+app.get('/get-api-key', (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY || '';
+    res.json({ 
+        apiKey: apiKey ? 'API key is set' : '',
+        isSet: !!apiKey
+    });
+});
+
+// Add this new endpoint
+app.post('/reset/:userId', (req, res) => {
+    const { userId } = req.params;
+    
+    // Clear all user data
+    delete userConversations[userId];
+    delete userContexts[userId];
+    delete userSearchStatuses[userId];
+    delete userCommands[userId];
+    
+    res.json({ success: true });
+});
+
+// Add this new endpoint after your other endpoints
+app.post('/update-command', (req, res) => {
+    const { userId, command } = req.body;
+    try {
+        userCommands[userId] = command;
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating command:', error);
+        res.status(500).json({ error: 'Failed to update command' });
+    }
 });
 
 app.listen(port, () => {
