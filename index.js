@@ -210,7 +210,10 @@ app.post('/chat', async (req, res) => {
         res.end();
     } catch (error) {
         console.error("API Error:", error);
-        res.status(500).json({ error: 'There was an error processing your request.' });
+        // Instead of sending a JSON response, send an error message in the same format as successful responses
+        const errorMessage = "I apologize, but there was an error processing your request. Please try again later.";
+        res.write(`data: ${JSON.stringify({ type: 'final', response: errorMessage })}\n\n`);
+        res.end();
     }
 });
 
