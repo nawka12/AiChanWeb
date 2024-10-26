@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ai-chan Web Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-cookie@3.0.1/dist/js.cookie.min.js"></script>
+    <style>
+        .search-status {
+            color: #666;
+            cursor: pointer;
+        }
+        .search-queries {
+            display: none;
+            margin-top: 5px;
+            padding-left: 20px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex items-center justify-center">
+    <div class="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+        <h1 class="text-2xl font-bold mb-4 text-center text-blue-600">Ai-chan Web Chat</h1>
+        <div id="chat-container" class="h-96 overflow-y-auto mb-4 p-4 border border-gray-200 rounded">
+        </div>
+        <div class="flex space-x-2 mb-4">
+            <input type="text" id="user-input" placeholder="Type your message..." class="flex-grow px-3 py-2 border border-gray-300 rounded-l focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="sendMessage()" class="bg-blue-500 text-white px-4 py-2 rounded-r hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">Send</button>
+        </div>
+        <div class="flex space-x-2">
+            <select id="command-select" class="flex-grow px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="offline">Offline</option>
+                <option value="search">Search</option>
+                <option value="deepsearch">Deep Search</option>
+            </select>
+            <button onclick="resetConversation()" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const commandSelect = document.getElementById('command-select');
+        let userId = Cookies.get('userId') || generateUserId();
+
+        function generateUserId() {
+            const newUserId = 'user-' + Math.random().toString(36).substr(2, 9);
+            Cookies.set('userId', newUserId, { expires: 365 });
+            return newUserId;
+        }
+
+        async function loadConversation() {
+            try {
+                const response = await fetch(`/conversation/${userId}`);
+                const data = await response.json();
+                if (data.conversation) {
+                    data.conversation.forEach(message => {
+                        appendMessage(message.role === 'user' ? 'User' : 'Ai-chan', message.content);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading conversation:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const message = userInput.value;
+            const command = commandSelect.value;
+            if (!message) return;
+
+            appendMessage('User', message);
+            userInput.value = '';
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message, userId, command }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let searchStatusElement = null;
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const messages = chunk.split('\n\n').filter(msg => msg.trim() !== '');
+
+                    for (const msg of messages) {
+                        const data = JSON.parse(msg.replace('data: ', ''));
+                        if (data.type === 'searchStatus') {
+                            if (searchStatusElement) {
+                                searchStatusElement.querySelector('.status-text').textContent = data.content;
+                            } else {
+                                searchStatusElement = appendSearchStatus(data.content, data.queries);
+                            }
+                        } else if (data.type === 'final') {
+                            appendMessage('Ai-chan', data.response);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                appendMessage('Ai-chan', 'Sorry, there was an error processing your request.');
+            }
+        }
+
+        function appendMessage(sender, message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'mb-2';
+            messageElement.innerHTML = `
+                <span class="font-bold ${sender === 'User' ? 'text-blue-600' : 'text-green-600'}">${sender}:</span>
+                <span class="text-gray-700">${message}</span>
+            `;
+            chatContainer.appendChild(messageElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function appendSearchStatus(content, queries) {
+            const statusElement = document.createElement('div');
+            statusElement.className = 'search-status mb-2';
+            statusElement.innerHTML = `
+                <span class="status-text">${content}</span>
+                <ul class="search-queries">
+                    ${queries.map(q => `<li>${q}</li>`).join('')}
+                </ul>
+            `;
+            statusElement.addEventListener('click', () => {
+                statusElement.querySelector('.search-queries').style.display = 
+                    statusElement.querySelector('.search-queries').style.display === 'none' ? 'block' : 'none';
+            });
+            chatContainer.appendChild(statusElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return statusElement;
+        }
+
+        function resetConversation() {
+            chatContainer.innerHTML = '';
+            userId = generateUserId();
+            appendMessage('System', 'New conversation started.');
+        }
+
+        userInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // Load conversation on page load
+        loadConversation();
+    </script>
+</body>
+</html>
