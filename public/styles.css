@@ -52,6 +52,8 @@ body.dark-mode #user-input {
     background-color: #2a2a2a;
     color: #ffffff;
     border-color: #3a3a3a;
+    line-height: 1.5;
+    overflow-y: hidden;
 }
 
 body.dark-mode #settings-modal .bg-white {
