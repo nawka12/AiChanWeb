@@ -52,7 +52,7 @@ const userSearchStatuses = {}; // This will now store an array of search statuse
 const userCommands = {};
 
 // Helper functions
-const processContext = async (userId) => {
+const processContext = async (userId, anthropic) => {
     if (userConversations[userId].length < 2) return '';
 
     const conversationHistory = userConversations[userId];
@@ -156,7 +156,7 @@ app.post('/chat', async (req, res) => {
         if (command === 'search' || command === 'deepsearch') {
             try {
                 if (userConversations[userId].length >= 2) {
-                    userContexts[userId] = await processContext(userId);
+                    userContexts[userId] = await processContext(userId, anthropic);
                 }
 
                 const queryContext = `${userContexts[userId] ? `Context: ${userContexts[userId]}\n` : ''}Question: ${message}`;
@@ -196,7 +196,7 @@ app.post('/chat', async (req, res) => {
         } else {
             messages.push({ role: "user", content: message });
             if (userConversations[userId].length >= 2) {
-                userContexts[userId] = await processContext(userId);
+                userContexts[userId] = await processContext(userId, anthropic);
             }
         }
 
