@@ -41,11 +41,10 @@ const chatContainer = document.getElementById('chat-container');
         async function sendMessage() {
             const message = userInput.value.trim();
             const command = commandSelect.value;
-            if (!message) return;  // Prevent sending empty messages or just whitespace
+            if (!message) return;
 
             appendMessage('User', message);
             userInput.value = '';
-            // Reset textarea height after clearing
             userInput.style.height = 'auto';
 
             try {
@@ -56,6 +55,10 @@ const chatContainer = document.getElementById('chat-container');
                     },
                     body: JSON.stringify({ message, userId, command }),
                 });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
@@ -70,24 +73,43 @@ const chatContainer = document.getElementById('chat-container');
                     const messages = chunk.split('\n\n').filter(msg => msg.trim() !== '');
 
                     for (const msg of messages) {
-                        const data = JSON.parse(msg.replace('data: ', ''));
-                        if (data.type === 'searchStatus') {
-                            allQueries = data.queries;
-                            if (!searchStatusElement) {
-                                searchStatusElement = appendSearchStatus(data.content, allQueries);
-                                // Store the message index with the search status element
-                                searchStatusElement.dataset.messageIndex = data.messageIndex;
-                            } else {
-                                updateSearchStatus(searchStatusElement, data.content, allQueries);
+                        try {
+                            const cleanedMsg = msg.replace('data: ', '');
+                            if (!cleanedMsg) continue;
+                            
+                            const data = JSON.parse(cleanedMsg);
+                            
+                            if (data.type === 'searchStatus') {
+                                allQueries = data.queries;
+                                if (!searchStatusElement) {
+                                    searchStatusElement = appendSearchStatus(data.content, allQueries);
+                                    searchStatusElement.dataset.messageIndex = data.messageIndex;
+                                } else {
+                                    updateSearchStatus(searchStatusElement, data.content, allQueries);
+                                }
+                            } else if (data.type === 'final') {
+                                if (data.response) {
+                                    appendMessage('Ai-chan', data.response);
+                                } else {
+                                    console.error('Empty response received:', data);
+                                    appendMessage('Ai-chan', 'I apologize, but I received an empty response. Please try again.');
+                                }
                             }
-                        } else if (data.type === 'final') {
-                            appendMessage('Ai-chan', data.response);
+                        } catch (parseError) {
+                            console.error('Error parsing message:', parseError, 'Raw message:', msg);
+                            continue;
                         }
                     }
                 }
             } catch (error) {
                 console.error('Error:', error);
-                appendMessage('Ai-chan', 'Sorry, there was an error processing your request. Please try again later.');
+                let errorMessage = 'Sorry, there was an error processing your request. Please try again later.';
+                
+                if (error.message.includes('401')) {
+                    errorMessage = 'There seems to be an issue with the API key. Please check your settings.';
+                }
+                
+                appendMessage('Ai-chan', errorMessage);
             }
         }
 
