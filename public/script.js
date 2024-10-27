@@ -39,12 +39,14 @@ const chatContainer = document.getElementById('chat-container');
         }
 
         async function sendMessage() {
-            const message = userInput.value;
+            const message = userInput.value.trim();
             const command = commandSelect.value;
-            if (!message) return;
+            if (!message) return;  // Prevent sending empty messages or just whitespace
 
             appendMessage('User', message);
             userInput.value = '';
+            // Reset textarea height after clearing
+            userInput.style.height = 'auto';
 
             try {
                 const response = await fetch('/chat', {
@@ -204,9 +206,18 @@ const chatContainer = document.getElementById('chat-container');
             appendMessage('System', 'New conversation started.');
         }
 
-        userInput.addEventListener('keypress', function(e) {
+        userInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
-                sendMessage();
+                if (e.shiftKey) {
+                    // Allow the default behavior for Shift+Enter (new line)
+                    return;
+                } else {
+                    e.preventDefault();
+                    const messageContent = this.value.trim();
+                    if (messageContent) {  // Only send if there's actual content
+                        sendMessage();
+                    }
+                }
             }
         });
 
@@ -309,4 +320,14 @@ const chatContainer = document.getElementById('chat-container');
         document.getElementById('mobile-menu-toggle').addEventListener('click', function() {
             const mobileMenu = document.getElementById('mobile-menu');
             mobileMenu.classList.toggle('hidden');
+        });
+
+        // Add this after your existing code
+        document.getElementById('user-input').addEventListener('input', function() {
+            // Reset height to auto to get the correct scrollHeight
+            this.style.height = 'auto';
+            
+            // Set new height based on scrollHeight
+            const newHeight = Math.min(this.scrollHeight, 200);
+            this.style.height = newHeight + 'px';
         });
